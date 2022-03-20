@@ -1,0 +1,98 @@
+body {
+    background: none !important;
+    --main-color-light: #1c1c1caf;
+	font-family: 'Franklin Gothic Medium', 'Arial Narrow', Arial, sans-serif;
+}
+
+#container {
+    animation: fadeInOpacity 0.5s 1;
+    overflow: auto;
+    font-size: 20px;
+    padding: 25px;
+    color: white;
+    position: fixed;
+    top: 50%;
+    left: 90%;
+    transform: translate(-50%, -50%);
+    background-color: rgba(44, 44, 44, 0.692);
+    height: 400px;
+    width: 200px;
+    border: 2px solid rgba(33, 38, 48, 0.801);
+    border-radius: 7px;
+    background-image: url("https://cdn.discordapp.com/attachments/751211990227091517/933405271961780264/bergstoppen.png");
+    background-repeat: no-repeat;
+    background-position-x: center;
+    background-position-y: center;
+    background-size: 200px;
+}
+
+h1 {
+    margin-left: 25px;
+    display: inline;
+    position: relative;
+    top: -8px;
+    color: #ffffff;
+    font-size: 30px;
+}
+
+button {
+	width: 200px;
+	display: inline;
+    float: center;
+	align-items: center;
+	justify-content: center;
+	background: var(--main-color-light);
+	margin: 1%;
+	padding: 3%;
+	font-size: 110%;
+    color: #fff;
+    border: 2px solid rgba(33, 38, 48, 0.801);
+	border-radius: 4px;
+}
+
+button:hover {
+	background: #272727af;
+	border-radius: 4px;
+    border: 2px solid rgba(255, 255, 255, 0.911);
+}
+
+::-webkit-scrollbar {
+    width: 10px;
+    border-radius: 10px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--main-color-light);
+    border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #888;
+    border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #555;
+}
+
+.fade-in {
+	opacity: 1;
+	animation-name: fadeInOpacity;
+	animation-iteration-count: 1;
+	animation-timing-function: ease-in;
+	animation-duration: 2s;
+}
+
+@keyframes fadeInOpacity {
+	0% {
+		opacity: 0;
+	}
+	100% {
+		opacity: 1;
+	}
+}
+
+.logo {
+    width: 100px;
+    height: 100px;
+}

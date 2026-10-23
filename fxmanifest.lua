@@ -1,19 +1,35 @@
 fx_version 'cerulean'
-games { 'gta5' }
+lua54 'yes'
+game 'gta5'
+
+name 'force_quests'
+author 'Force Developments <discord:@force3883>'
+description 'Quick jobs from one NPC: deliver a trailer, pick up boxes, scrap a car with a bulldozer or clean the subway. ESX, QBCore and QBox.'
+version '2.0.0'
+
+dependencies {
+    '/onesync',
+    'ox_lib',
+}
+
+shared_scripts {
+    '@ox_lib/init.lua',
+    'config.lua',
+    'shared/functions.lua',
+}
+
+server_scripts {
+    'version.lua',
+    'server/custom/frameworks/*.lua',
+    'server/main.lua',
+}
 
 client_scripts {
-    "config.lua",
-    "client/*"
+    'client/custom/frameworks/*.lua',
+    'client/interact.lua',
+    'client/main.lua',
 }
 
-server_scripts {	
-    'config.lua',
-	'server/*'
-}
-
-ui_page "html/index.html"
 files {
-    'html/index.html',
-    'html/index.js',
-    'html/index.css'
+    'locales/*.json',
 }

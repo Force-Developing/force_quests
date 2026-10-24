@@ -314,6 +314,13 @@ local function trackVehicles(source, running)
   return true
 end
 
+--- What the client needs to pick up the player's quest: its id, the stops done, the vehicles and the carried box
+local function questState(running)
+  local done = {}
+  for index in pairs(running.done) do done[#done + 1] = index end
+  return { id = running.id, done = done, netIds = vehicleNetIds(running), carrying = running.carrying }
+end
+
 lib.callback.register(RESOURCE .. ":server:start", function(source, id)
   if not IsFrameworkReady() then return false, "not_ready" end
   local quest = GetQuest(id)
@@ -321,7 +328,8 @@ lib.callback.register(RESOURCE .. ":server:start", function(source, id)
   local identifier = identifierOf(source)
   if not identifier then return false, "not_ready" end
   expire(source)
-  if quests[source] then return false, "busy" end
+  -- the state lets a client that missed the answer to its start (or to a step) pick the quest up again
+  if quests[source] then return false, "busy", questState(quests[source]) end
   if not Config.Ped or not isNear(source, Config.Ped.position, GetInteractDistance()) then return false, "too_far" end
   local key = playerKey(source, identifier)
   local left = cooldownLeft(identifier, key, quest.id)
@@ -362,6 +370,13 @@ lib.callback.register(RESOURCE .. ":server:start", function(source, id)
   end
   Debug("info", "%s started quest '%s'", tostring(GetPlayerName(source)), quest.id)
   return true, vehicleNetIds(running)
+end)
+
+-- The client lost track of its quest (an answer came after it stopped waiting): the server's state, false for none
+lib.callback.register(RESOURCE .. ":server:state", function(source)
+  local running = quests[source]
+  if not running or expire(source) then return false end
+  return questState(running)
 end)
 
 -- The client asks for a vehicle that spawns near its spot (or for a replacement of a destroyed one)

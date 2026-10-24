@@ -68,6 +68,7 @@
   "not_finished_header": "%s",
   "not_finished_content": "Du är inte klar med jobbet än. Vill du avbryta det?",
   "cancelled": "Jobbet avbröts.",
+  "resumed": "Ditt jobb pågår fortfarande.",
   "busy": "Du har redan ett jobb igång.",
   "quest_busy": "Någon annan gör det här jobbet. Kom tillbaka senare.",
   "cooldown": "Vänta %s minuter innan du tar det här jobbet igen.",

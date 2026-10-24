@@ -11,6 +11,8 @@ local LEAVE_TIMEOUT = 3000
 local LOAD_DISTANCE = 3.0
 -- Time between two attempts to start / finish scrapping while the server says "not yet"
 local SCRAP_RETRY = 2000
+-- Time before trying again after the server didn't answer or the stop was already decided (the state was fetched)
+local SCRAP_RESYNC_RETRY = 10000
 local KEY_E = 38
 local BLIP_COLOUR = 46
 local TRUNK_DOOR = 5
@@ -23,6 +25,8 @@ local ped = nil          -- Philip: { entity, point, blip }
 local requesting = false -- menu / dialog / server request at Philip in progress
 local quest = nil        -- the running quest, see beginQuest()
 local lastPress = 0
+local beginQuest         -- (def, netIds, done, resumed), defined below
+local resync             -- (current), defined below
 
 local function notify(message, notifyType)
   lib.notify({ description = message, type = notifyType or "inform" })
@@ -169,6 +173,7 @@ local function requestVehicle(current, name)
     end
     -- a blocked spot or a failed spawn needs the player (move the car standing there); told now and then, not every try
     local reason = netId
+    if ok == false and reason == "no_quest" then return resync(current) end
     if ok == false and (reason == "spot_blocked" or reason == "vehicle_failed" or reason == "vehicle_lost") then
       local at = GetGameTimer()
       if (current.vehicleNotified[name] or -VEHICLE_NOTIFY_INTERVAL) + VEHICLE_NOTIFY_INTERVAL <= at then
@@ -272,6 +277,42 @@ local function markDone(current, stop)
   if not GetCurrentGroup(current.def, current.done) then notify(locale("all_done", Config.Ped.name)) end
 end
 
+--- Picks up the quest the server holds for this player (the client missed the answer that started it)
+local function resumeQuest(state)
+  local def = type(state) == "table" and GetQuest(state.id)
+  if not def or quest then return false end
+  beginQuest(def, state.netIds, state.done, true)
+  notify(textOr("resumed", "Your job is still running."))
+  return true
+end
+
+--- Fetches the server's state of the quest after an answer that didn't come (or came too late) or a step the server
+--- had already decided: stops done, vehicles, the carried box. Ends the quest here when the server has none.
+resync = function(current)
+  if current.syncing then return end
+  current.syncing = true
+  local state = awaitServer(RESOURCE .. ":server:state")
+  current.syncing = false
+  if quest ~= current or state == nil then return end
+  if not state or state.id ~= current.def.id then
+    endQuest()
+    notifyReason("no_quest")
+    if state then resumeQuest(state) end
+    return
+  end
+  local wasOpen = GetCurrentGroup(current.def, current.done) ~= nil
+  current.done = {}
+  for _, index in ipairs(type(state.done) == "table" and state.done or {}) do
+    if current.def.stops[index] then current.done[index] = true end
+  end
+  for name, netId in pairs(type(state.netIds) == "table" and state.netIds or {}) do
+    if current.def.vehicles[name] then current.netIds[name] = tonumber(netId) end
+  end
+  if current.carrying and state.carrying ~= current.carrying then dropCarry(current) end
+  current.scrapBegun = false
+  if wasOpen and not GetCurrentGroup(current.def, current.done) then notify(locale("all_done", Config.Ped.name)) end
+end
+
 --- Detaches the trailer and tells the player to bring the truck back
 local function onDelivered(current, stop)
   local truck = vehicleEntity(current, stop.vehicle)
@@ -297,8 +338,13 @@ local function runVehicleStop(current, stop)
   if quest ~= current then return end
   local ok, result = awaitServer(RESOURCE .. ":server:complete", stop.index)
   if quest ~= current then return end
-  if ok == nil then return notify(locale("server_no_response"), "error") end
+  if ok == nil then
+    notify(locale("server_no_response"), "error")
+    return resync(current)
+  end
   if not ok then
+    -- "failed": the stop isn't open (any more), e.g. the server accepted it but its answer came too late
+    if result == "failed" then return resync(current) end
     notifyReason(result, current.def, stop)
     if result == "no_quest" or result == "expired" then endQuest() end
     return
@@ -316,8 +362,17 @@ end
 local function runTimed(current, stop, progress)
   local ok, reason = awaitServer(RESOURCE .. ":server:begin", stop.index)
   if quest ~= current then return false end
-  if ok == nil then notify(locale("server_no_response"), "error") return false end
-  if not ok then notifyReason(reason, current.def, stop) return false end
+  if ok == nil then
+    notify(locale("server_no_response"), "error")
+    resync(current)
+    return false
+  end
+  if not ok then
+    if reason == "failed" then resync(current) return false end
+    notifyReason(reason, current.def, stop)
+    if reason == "no_quest" or reason == "expired" then endQuest() end
+    return false
+  end
 
   local okBar, finished = pcall(lib.progressBar, progress)
   ClearPedTasks(PlayerPedId())
@@ -327,8 +382,13 @@ local function runTimed(current, stop, progress)
 
   local done, result = awaitServer(RESOURCE .. ":server:complete", stop.index)
   if quest ~= current then return false end
-  if done == nil then notify(locale("server_no_response"), "error") return false end
+  if done == nil then
+    notify(locale("server_no_response"), "error")
+    resync(current)
+    return false
+  end
   if not done then
+    if result == "failed" then resync(current) return false end
     notifyReason(result, current.def, stop)
     if result == "no_quest" or result == "expired" then endQuest() end
     return false
@@ -370,8 +430,12 @@ end
 local function loadBox(current, stop)
   local ok, done, total = awaitServer(RESOURCE .. ":server:load", stop.index)
   if quest ~= current then return end
-  if ok == nil then return notify(locale("server_no_response"), "error") end
+  if ok == nil then
+    notify(locale("server_no_response"), "error")
+    return resync(current)
+  end
   if not ok then
+    if done == "failed" then return resync(current) end
     notifyReason(done, current.def, stop)
     if done == "no_quest" or done == "expired" then endQuest() end
     if done == "not_carrying" then dropCarry(current) end
@@ -428,7 +492,12 @@ local function scrapStep(current, stop)
     if quest ~= current then return end
     current.nextScrap = GetGameTimer() + SCRAP_RETRY
     if not ok then
-      if ok == false and result ~= "not_scrapped" and result ~= "too_fast" then
+      -- no answer, or the stop was already decided (an answer came too late): fetch the state instead of asking again
+      if ok == nil or result == "failed" then
+        current.nextScrap = GetGameTimer() + SCRAP_RESYNC_RETRY
+        return resync(current)
+      end
+      if result ~= "not_scrapped" and result ~= "too_fast" then
         current.scrapBegun = false
         if result == "no_quest" or result == "expired" then
           notifyReason(result)
@@ -748,7 +817,7 @@ local function runQuest(current)
   end
 end
 
-local function beginQuest(def, netIds)
+beginQuest = function(def, netIds, done, resumed)
   local current = {
     def = def,
     done = {},
@@ -766,6 +835,9 @@ local function beginQuest(def, netIds)
   for name, netId in pairs(type(netIds) == "table" and netIds or {}) do
     if def.vehicles[name] then current.netIds[name] = tonumber(netId) end
   end
+  for _, index in ipairs(type(done) == "table" and done or {}) do
+    if def.stops[index] then current.done[index] = true end
+  end
   if def.area then
     local a = def.area
     current.areaBlip = AddBlipForRadius(a.coords.x, a.coords.y, a.coords.z, a.radius)
@@ -774,6 +846,7 @@ local function beginQuest(def, netIds)
   end
   quest = current
   CreateThread(function() runQuest(current) end)
+  if resumed then return end
   CreateThread(function()
     for i = 1, 4 do
       local key = ("dialog_%s_%d"):format(def.id, i)
@@ -792,8 +865,18 @@ end
 local function startQuest(def)
   if quest then return notify(locale("busy"), "error") end
   local ok, result, extra = awaitServer(RESOURCE .. ":server:start", def.id)
-  if ok == nil then return notify(locale("server_no_response"), "error") end
-  if not ok then return notifyReason(result, def, nil, extra) end
+  if quest then return end
+  if ok == nil then
+    -- the start may have gone through after the client stopped waiting: pick the quest up if the server holds one
+    notify(locale("server_no_response"), "error")
+    local state = awaitServer(RESOURCE .. ":server:state")
+    if state then resumeQuest(state) end
+    return
+  end
+  if not ok then
+    if result == "busy" and type(extra) == "table" and resumeQuest(extra) then return end
+    return notifyReason(result, def, nil, extra)
+  end
   beginQuest(def, result)
 end
 

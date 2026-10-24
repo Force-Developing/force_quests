@@ -68,6 +68,7 @@
   "not_finished_header": "%s",
   "not_finished_content": "You haven't finished the job yet. Do you want to cancel it?",
   "cancelled": "Job cancelled.",
+  "resumed": "Your job is still running.",
   "busy": "You already have a job running.",
   "quest_busy": "Someone else is doing this job. Come back later.",
   "cooldown": "Wait %s minutes before you take this job again.",

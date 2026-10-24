@@ -459,11 +459,22 @@ AddEventHandler("onResourceStop", function(resource)
   for src in pairs(quests) do endQuest(src, "resource stopped") end
 end)
 
--- Ends quests that ran past Config.MaxDuration
+--- Ends the quest when its player logged out or switched character (multichar) without leaving the server: otherwise
+--- the quest would keep its vehicles and block everyone else (Config.OneAtATime) until Config.MaxDuration.
+local function checkCharacter(source)
+  local running = quests[source]
+  if not running or running.finishing or identifierOf(source) == running.identifier then return end
+  endQuest(source, "character changed")
+  TriggerClientEvent(RESOURCE .. ":client:ended", source, "character")
+end
+
+-- Ends quests that ran past Config.MaxDuration or whose character is gone
 CreateThread(function()
   while true do
     Wait(5000)
-    for src in pairs(quests) do expire(src) end
+    for src in pairs(quests) do
+      if not expire(src) then checkCharacter(src) end
+    end
   end
 end)
 

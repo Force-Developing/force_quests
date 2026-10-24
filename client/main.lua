@@ -920,11 +920,11 @@ local function setupPed()
   end
 end
 
--- The server ended the quest (Config.MaxDuration)
+-- The server ended the quest (Config.MaxDuration, or the character logged out)
 RegisterNetEvent(RESOURCE .. ":client:ended", function(reason)
   if not quest then return end
   endQuest()
-  if reason == "expired" then notify(locale("expired"), "error") end
+  notify(locale(reason == "expired" and "expired" or "cancelled"), "error")
 end)
 
 OnEnvironmentReady(function()

@@ -31,6 +31,14 @@ Config.OneAtATime = true
 -- Minutes a quest may take. After that it is cancelled and its vehicles are removed.
 Config.MaxDuration = 45
 
+-- Minutes a quest may go without progress (a stop begun or done, a box picked up or loaded, a vehicle spawned near its
+-- spot). After that it is cancelled and its vehicles are removed. Leave room for the longest drive. 0 = no limit.
+Config.IdleTimeout = 15
+
+-- Minutes before the same player can take a quest again after cancelling it, running out of time, logging out or
+-- leaving (with Config.OneAtATime one player could otherwise hold a quest for everyone). Keyed by license. 0 = none.
+Config.CancelCooldown = 5
+
 -- Give the player keys for the quest vehicles (qbx_vehiclekeys, qb-vehiclekeys; see server/custom/frameworks)
 Config.GiveKeys = true
 

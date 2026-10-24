@@ -24,14 +24,28 @@ local SPOT_CLEAR_DISTANCE = 3.0
 -- A new vehicle's health is only known on the server once a client synced it
 local HEALTH_GRACE_MS = 30000
 
-local quests = {}    -- [source] = { id, identifier, startedAt, deadline, done = { [index] = true }, begun, carrying,
-                     --              lastStop, place, placeAt, vehicles = { [name] = entity }, spawnedAt = { [name] = ms } }
+local quests = {}    -- [source] = { id, identifier, player, startedAt, deadline, progressAt, done = { [index] = true },
+                     --              begun, carrying, lastStop, place, placeAt, vehicles = { [name] = entity },
+                     --              spawnedAt = { [name] = ms } }
 local takenBy = {}   -- [quest id] = source running it (Config.OneAtATime)
 local cooldowns = {} -- [identifier] = { [quest id] = GetGameTimer() when the cooldown ends }
+-- [license] = { [quest id] = GetGameTimer() when it ends }: after a quest was cancelled, ran out of time or its player left
+local cancelCooldowns = {}
 local lastStart = {} -- [source] = GetGameTimer() of the last accepted start
 
 local function maxDurationMs()
   return math.max(5, tonumber(Config.MaxDuration) or 45) * 60000
+end
+
+local function cancelCooldownMs()
+  return math.max(0, tonumber(Config.CancelCooldown) or 5) * 60000
+end
+
+--- 0 = no limit
+local function idleTimeoutMs()
+  local minutes = tonumber(Config.IdleTimeout) or 15
+  if minutes <= 0 then return 0 end
+  return math.max(1, minutes) * 60000
 end
 
 local function playerPed(source)
@@ -54,16 +68,28 @@ local function identifierOf(source)
   return type(identifier) == "string" and identifier ~= "" and identifier or nil
 end
 
---- Seconds left on the character's cooldown for a quest (0 when none)
-local function cooldownLeft(identifier, id)
-  local ends = cooldowns[identifier] and cooldowns[identifier][id]
+--- The key of a player's cancel cooldown: the license, so switching character or reconnecting doesn't reset it
+local function playerKey(source, identifier)
+  local license = GetPlayerIdentifierByType(source, "license")
+  return type(license) == "string" and license ~= "" and license or identifier
+end
+
+--- Milliseconds left of an entry in cooldowns / cancelCooldowns (0 when none; an ended entry is removed)
+local function msLeft(list, key, id)
+  local ends = list[key] and list[key][id]
   if not ends then return 0 end
   local left = ends - GetGameTimer()
   if left <= 0 then
-    cooldowns[identifier][id] = nil
+    list[key][id] = nil
+    if next(list[key]) == nil then list[key] = nil end
     return 0
   end
-  return math.ceil(left / 1000)
+  return left
+end
+
+--- Seconds left on the cooldowns for a quest: the character's after a payout, the player's after a cancel (0 when none)
+local function cooldownLeft(identifier, key, id)
+  return math.ceil(math.max(msLeft(cooldowns, identifier, id), msLeft(cancelCooldowns, key, id)) / 1000)
 end
 
 local function startCooldown(identifier, quest)
@@ -83,24 +109,45 @@ local function deleteVehicle(entity)
   if entity and entity ~= 0 and DoesEntityExist(entity) then DeleteEntity(entity) end
 end
 
+-- Ends that start no cancel cooldown: paid (the quest's own cooldown), a resource stop, a start whose vehicles failed
+local NO_CANCEL_COOLDOWN = { paid = true, ["resource stopped"] = true, ["start vehicle failed"] = true }
+
 --- Ends the player's quest (if any) and removes its vehicles. Every way a quest ends goes through here.
 local function endQuest(source, why)
   local running = quests[source]
   if not running then return nil end
   quests[source] = nil
   if takenBy[running.id] == source then takenBy[running.id] = nil end
+  -- cancelled, out of time, logout, left the server: the same player can't take this quest again at once (with
+  -- Config.OneAtATime one player could otherwise hold a quest for everyone by taking it again and again)
+  if not NO_CANCEL_COOLDOWN[why] and running.player and cancelCooldownMs() > 0 then
+    cancelCooldowns[running.player] = cancelCooldowns[running.player] or {}
+    cancelCooldowns[running.player][running.id] = GetGameTimer() + cancelCooldownMs()
+  end
   for _, entity in pairs(running.vehicles) do deleteVehicle(entity) end
   Debug("info", "Quest '%s' of %s ended: %s", running.id, tostring(GetPlayerName(source)), why)
   return running
 end
 
---- Ends a quest that ran past Config.MaxDuration and tells the client. Returns true when it did.
+--- Ends a quest that ran past Config.MaxDuration or went Config.IdleTimeout without progress, and tells the client.
+--- Returns true when it did.
 local function expire(source)
   local running = quests[source]
-  if not running or running.finishing or GetGameTimer() <= running.deadline then return false end
-  endQuest(source, "max duration")
+  if not running or running.finishing then return false end
+  local now = GetGameTimer()
+  local idle = idleTimeoutMs()
+  local why
+  if now > running.deadline then why = "max duration"
+  elseif idle > 0 and now - running.progressAt > idle then why = "no progress"
+  else return false end
+  endQuest(source, why)
   TriggerClientEvent(RESOURCE .. ":client:ended", source, "expired")
   return true
+end
+
+--- The quest moved on (a stop begun or done, a box picked up or loaded, a vehicle spawned near its spot)
+local function progressed(running)
+  running.progressAt = GetGameTimer()
 end
 
 --- True when the player could have travelled from the last place of the quest to `coords` since being there
@@ -213,7 +260,8 @@ lib.callback.register(RESOURCE .. ":server:start", function(source, id)
   expire(source)
   if quests[source] then return false, "busy" end
   if not Config.Ped or not isNear(source, Config.Ped.position, GetInteractDistance()) then return false, "too_far" end
-  local left = cooldownLeft(identifier, quest.id)
+  local key = playerKey(source, identifier)
+  local left = cooldownLeft(identifier, key, quest.id)
   if left > 0 then return false, "cooldown", left end
   if Config.OneAtATime ~= false and takenBy[quest.id] then return false, "quest_busy" end
   if lastStart[source] and GetGameTimer() - lastStart[source] < START_INTERVAL_MS then return false, "too_fast" end
@@ -223,8 +271,10 @@ lib.callback.register(RESOURCE .. ":server:start", function(source, id)
   local running = {
     id = quest.id,
     identifier = identifier,
+    player = key,
     startedAt = startedAt,
     deadline = startedAt + maxDurationMs(),
+    progressAt = startedAt,
     done = {},
     lastStop = 0,
     place = Config.Ped.position,
@@ -261,6 +311,7 @@ lib.callback.register(RESOURCE .. ":server:vehicle", function(source, name)
   if not isNear(source, vehicle.position, vehicle.spawnDistance or 50.0) then return false, "too_far" end
   local netId, reason = ensureVehicle(source, running, name)
   if not netId then return false, reason end
+  progressed(running)
   return true, netId
 end)
 
@@ -327,6 +378,7 @@ lib.callback.register(RESOURCE .. ":server:begin", function(source, index)
   -- Picking up another box drops the one in the player's hands (it stays where it was and can be picked up again)
   if stop.type == "carry" then running.carrying = nil end
   running.begun = { index = stop.index, at = GetGameTimer() }
+  progressed(running)
   return true, stop.duration
 end)
 
@@ -354,6 +406,7 @@ lib.callback.register(RESOURCE .. ":server:complete", function(source, index)
   end
 
   running.begun = nil
+  progressed(running)
   -- A picked up box is done once it is in the vehicle (:server:load)
   if stop.type == "carry" then
     running.carrying = stop.index
@@ -388,6 +441,7 @@ lib.callback.register(RESOURCE .. ":server:load", function(source, index)
   running.carrying = nil
   running.done[stop.index] = true
   running.lastStop = GetGameTimer()
+  progressed(running)
   arrive(running, coords)
   local done, total = 0, 0
   for i, s in ipairs(GetQuest(running.id).stops) do
@@ -470,7 +524,7 @@ local function checkCharacter(source)
   TriggerClientEvent(RESOURCE .. ":client:ended", source, "character")
 end
 
--- Ends quests that ran past Config.MaxDuration or whose character is gone
+-- Ends quests that ran past Config.MaxDuration, went Config.IdleTimeout without progress or whose character is gone
 CreateThread(function()
   while true do
     Wait(5000)

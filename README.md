@@ -11,7 +11,7 @@ Free. Works on ESX Legacy, QBCore and QBox.
 - Quest vehicles are spawned by the server, with keys (qbx_vehiclekeys, qb-vehiclekeys) and full fuel (ox_fuel)
 - Server-side checks: quest ids and stop indexes from the config, stop order, distance, the right vehicle, the trailer at the drop, the wreck's damage, timed pickups and cleaning, travel time between places, one quest per player, one player per quest
 - The reward is a random amount between a minimum and a maximum, paid once by the server as cash or bank money
-- Cooldown per quest after being paid, cancel at Philip, a maximum duration, and cleanup when the player logs out, leaves or the resource restarts
+- Cooldown per quest after being paid and a shorter one after cancelling, cancel at Philip, a maximum duration, an idle limit, and cleanup when the player logs out, leaves or the resource restarts
 - Build your own quests from deliver, return, carry, scrap and task stops
 - English and Swedish locales
 

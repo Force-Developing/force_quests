@@ -11,7 +11,7 @@ Free. Works on ESX Legacy, QBCore and QBox.
 - Quest vehicles are spawned by the server, with keys (qbx_vehiclekeys, qb-vehiclekeys) and full fuel (ox_fuel)
 - Server-side checks: quest ids and stop indexes from the config, stop order, distance, the right vehicle, the trailer at the drop, the wreck's damage, timed pickups and cleaning, travel time between places, one quest per player, one player per quest
 - The reward is a random amount between a minimum and a maximum, paid once by the server as cash or bank money
-- Cooldown per quest after being paid, cancel at Philip, a maximum duration, and cleanup when the player leaves or the resource restarts
+- Cooldown per quest after being paid, cancel at Philip, a maximum duration, and cleanup when the player logs out, leaves or the resource restarts
 - Build your own quests from deliver, return, carry, scrap and task stops
 - English and Swedish locales
 
@@ -29,6 +29,10 @@ No database and no items are used.
 1. Put the folder in your resources as `force_quests`.
 2. Add `ensure force_quests` to `server.cfg` below `ensure ox_lib`. The order relative to your framework and target resource doesn't matter.
 3. Edit `config.lua`: rewards, payout account, cooldowns and the quests.
+
+## Updating from 1.x
+
+A `config.lua` kept from 1.x still works (the positions, models and rewards of the four jobs are used), but the new options need the 2.0 `config.lua`. The old events, including the four reward events any client could call, are gone. See the [documentation](https://docs.forcedevelopments.com/free-resources/force_quests/introduction#updating-from-1.x).
 
 ## Documentation
 

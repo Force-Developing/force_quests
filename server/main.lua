@@ -141,6 +141,8 @@ local function spawnVehicle(source, vehicle)
   while not DoesEntityExist(entity) and GetGameTimer() < deadline do Wait(50) end
   if not DoesEntityExist(entity) then
     Log("error", ("Quest vehicle '%s' (%s) did not appear"):format(vehicle.name, vehicle.model))
+    -- it may still show up later: it must not stay in the world without a quest
+    pcall(DeleteEntity, entity)
     return nil
   end
   pcall(SetEntityOrphanMode, entity, 2)

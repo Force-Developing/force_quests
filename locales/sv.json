@@ -81,6 +81,7 @@
   "expired": "Du tog för lång tid, jobbet är avbrutet.",
   "vehicle_failed": "Fordonet kunde inte skapas. Försök igen om en stund.",
   "spot_blocked": "Något står i vägen för fordonet. Flytta det och försök igen.",
+  "vehicle_lost": "Fordonet är borta. Prata med %s för att avbryta jobbet.",
   "payment_failed": "Betalningen misslyckades. Prata med %s igen.",
   "unknown_quest": "Det jobbet finns inte.",
   "failed": "Något gick fel, försök igen.",

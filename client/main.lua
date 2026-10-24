@@ -78,6 +78,7 @@ local function notifyReason(reason, def, stop, extra)
     return notify(locale("no_trailer", def.vehicles[stop.trailer].label), "error")
   end
   if reason == "payment_failed" then return notify(locale("payment_failed", Config.Ped.name), "error") end
+  if reason == "vehicle_lost" then return notify(locale("vehicle_lost", Config.Ped.name), "error") end
   local key = type(reason) == "string" and reason or "failed"
   local text = locale(key)
   notify(text == key and locale("failed") or text, "error")
@@ -168,7 +169,7 @@ local function requestVehicle(current, name)
     end
     -- a blocked spot or a failed spawn needs the player (move the car standing there); told now and then, not every try
     local reason = netId
-    if ok == false and (reason == "spot_blocked" or reason == "vehicle_failed") then
+    if ok == false and (reason == "spot_blocked" or reason == "vehicle_failed" or reason == "vehicle_lost") then
       local at = GetGameTimer()
       if (current.vehicleNotified[name] or -VEHICLE_NOTIFY_INTERVAL) + VEHICLE_NOTIFY_INTERVAL <= at then
         current.vehicleNotified[name] = at

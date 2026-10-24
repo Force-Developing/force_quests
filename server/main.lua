@@ -23,10 +23,19 @@ local SPAWN_TIMEOUT_MS = 3000
 local SPOT_CLEAR_DISTANCE = 3.0
 -- A new vehicle's health is only known on the server once a client synced it
 local HEALTH_GRACE_MS = 30000
+-- Quest vehicles are sampled every 5 s (and at every step): a vehicle may not move farther than TRAVEL_SPEED allows in
+-- the time since its last accepted position, plus this many meters (network sync, physics, hooking a trailer)
+local VEHICLE_JUMP_SLACK = 100.0
+-- A sample where the vehicle didn't move proves nothing (parked, or its position isn't synced for a moment), so it
+-- doesn't reset the time of the last accepted position; but at most this much time counts toward the next sample:
+-- a truck parked at the depot can't jump to the drop afterwards.
+local VEHICLE_STILL_MOVED = 1.0
+local VEHICLE_MAX_GAP_MS = 20000
 
 local quests = {}    -- [source] = { id, identifier, player, startedAt, deadline, progressAt, done = { [index] = true },
                      --              begun, carrying, lastStop, place, placeAt, vehicles = { [name] = entity },
-                     --              spawnedAt = { [name] = ms } }
+                     --              spawnedAt = { [name] = ms }, track = { [name] = { coords, at } },
+                     --              destroyed = { [name] = true when the server saw it destroyed } }
 local takenBy = {}   -- [quest id] = source running it (Config.OneAtATime)
 local cooldowns = {} -- [identifier] = { [quest id] = GetGameTimer() when the cooldown ends }
 -- [license] = { [quest id] = GetGameTimer() when it ends }: after a quest was cancelled, ran out of time or its player left
@@ -103,6 +112,20 @@ local function vehicleAlive(entity, spawnedAt)
   if not entity or entity == 0 or not DoesEntityExist(entity) then return false end
   if spawnedAt and GetGameTimer() - spawnedAt < HEALTH_GRACE_MS then return true end
   return GetEntityHealth(entity) > 0
+end
+
+--- Remembers that the server saw the quest vehicle `name` destroyed (a vehicle that later vanishes was destroyed first)
+local function noteDestroyed(running, name)
+  local entity = running.vehicles[name]
+  if entity and DoesEntityExist(entity) and not vehicleAlive(entity, running.spawnedAt[name]) then
+    running.destroyed[name] = true
+  end
+end
+
+--- True when the quest vehicle `name` vanished without the server seeing it destroyed (a modified client deleted it)
+local function vehicleLost(running, name)
+  local entity = running.vehicles[name]
+  return entity ~= nil and not DoesEntityExist(entity) and not running.destroyed[name]
 end
 
 local function deleteVehicle(entity)
@@ -214,6 +237,17 @@ local function ensureVehicle(source, running, name)
   local last = running.spawnedAt[name]
   if vehicleAlive(current, last) then return NetworkGetNetworkIdFromEntity(current) end
   if last and GetGameTimer() - last < RESPAWN_INTERVAL_MS then return nil, "too_fast" end
+  noteDestroyed(running, name)
+  -- a replacement would stand on its spot, which is the return spot: a vehicle to hand back has to be brought back
+  if vehicleLost(running, name) then
+    local quest = GetQuest(running.id)
+    local group = GetCurrentGroup(quest, running.done)
+    for index, stop in ipairs(quest.stops) do
+      if stop.type == "return" and stop.vehicle == name and stop.group == group and not running.done[index] then
+        return nil, "vehicle_lost"
+      end
+    end
+  end
   deleteVehicle(current)
   running.vehicles[name] = nil
   if not spotClear(running, vehicle.position) then return nil, "spot_blocked" end
@@ -226,6 +260,8 @@ local function ensureVehicle(source, running, name)
   end
   if not entity then return nil, "vehicle_failed" end
   running.vehicles[name] = entity
+  running.destroyed[name] = nil
+  running.track[name] = { coords = vehicle.position, at = GetGameTimer() }
   return NetworkGetNetworkIdFromEntity(entity)
 end
 
@@ -249,6 +285,33 @@ local function vehicleCoords(running, name)
   local entity = running.vehicles[name]
   if not entity or not DoesEntityExist(entity) then return nil end
   return GetEntityCoords(entity)
+end
+
+--- Compares every quest vehicle's position with its last accepted one. False (and the quest ended) when one moved
+--- farther than it can drive in the time between, i.e. a modified client teleported it. A vehicle that doesn't exist
+--- for a moment, isn't synced or didn't move is skipped; the next sample is compared over the time since the last
+--- accepted one (up to VEHICLE_MAX_GAP_MS). Also notes vehicles the server sees destroyed.
+local function trackVehicles(source, running)
+  local now = GetGameTimer()
+  for name, entity in pairs(running.vehicles) do
+    local track = running.track[name]
+    if track and DoesEntityExist(entity) then
+      noteDestroyed(running, name)
+      local coords = GetEntityCoords(entity)
+      local moved = #(coords - track.coords)
+      if #coords >= 1.0 and moved >= VEHICLE_STILL_MOVED then
+        local gap = math.min(now - track.at, VEHICLE_MAX_GAP_MS)
+        if moved > TRAVEL_SPEED * gap / 1000 + VEHICLE_JUMP_SLACK then
+          Log("warn", ("Quest vehicle '%s' of %s moved %d m in %.1f s, faster than it can drive: quest ended"):format(
+            name, tostring(GetPlayerName(source)), math.floor(moved), (now - track.at) / 1000))
+          endQuest(source, "vehicle moved faster than it can drive")
+          return false
+        end
+        track.coords, track.at = coords, now
+      end
+    end
+  end
+  return true
 end
 
 lib.callback.register(RESOURCE .. ":server:start", function(source, id)
@@ -281,6 +344,8 @@ lib.callback.register(RESOURCE .. ":server:start", function(source, id)
     placeAt = startedAt,
     vehicles = {},
     spawnedAt = {},
+    track = {},
+    destroyed = {},
   }
   quests[source] = running
   takenBy[quest.id] = source
@@ -358,9 +423,14 @@ local function checkPlace(source, running, stop)
     end
     return true
   end
-  -- "return": a destroyed or vanished vehicle doesn't block the quest; the player still has to come back here
+  -- "return": a vehicle the server saw destroyed doesn't block the quest (the player still has to come back here); one
+  -- that vanished without that has to be brought back
   local coords = vehicleCoords(running, stop.vehicle)
-  if coords and #(coords - stop.coords) > stop.radius + DISTANCE_MARGIN then return false, "too_far" end
+  if not coords then
+    if vehicleLost(running, stop.vehicle) then return false, "vehicle_lost" end
+    return true
+  end
+  if #(coords - stop.coords) > stop.radius + DISTANCE_MARGIN then return false, "too_far" end
   return true
 end
 
@@ -369,6 +439,7 @@ lib.callback.register(RESOURCE .. ":server:begin", function(source, index)
   local running = quests[source]
   if not running then return false, "no_quest" end
   if expire(source) then return false, "expired" end
+  if not trackVehicles(source, running) then return false, "no_quest" end
   local stop, reason = checkStop(running, index)
   if not stop then return false, reason end
   if stop.type ~= "carry" and stop.type ~= "task" and stop.type ~= "scrap" then return false, "failed" end
@@ -386,6 +457,7 @@ lib.callback.register(RESOURCE .. ":server:complete", function(source, index)
   local running = quests[source]
   if not running then return false, "no_quest" end
   if expire(source) then return false, "expired" end
+  if not trackVehicles(source, running) then return false, "no_quest" end
   local stop, reason = checkStop(running, index)
   if not stop then return false, reason end
   local begun = running.begun
@@ -431,6 +503,7 @@ lib.callback.register(RESOURCE .. ":server:load", function(source, index)
   local running = quests[source]
   if not running then return false, "no_quest" end
   if expire(source) then return false, "expired" end
+  if not trackVehicles(source, running) then return false, "no_quest" end
   local stop, reason = checkStop(running, index)
   if not stop then return false, reason end
   if stop.type ~= "carry" or running.carrying ~= stop.index then return false, "not_carrying" end
@@ -524,12 +597,19 @@ local function checkCharacter(source)
   TriggerClientEvent(RESOURCE .. ":client:ended", source, "character")
 end
 
--- Ends quests that ran past Config.MaxDuration, went Config.IdleTimeout without progress or whose character is gone
+-- Every 5 s: ends quests that ran past Config.MaxDuration, went Config.IdleTimeout without progress, whose character is
+-- gone or whose vehicle was teleported
 CreateThread(function()
   while true do
     Wait(5000)
     for src in pairs(quests) do
-      if not expire(src) then checkCharacter(src) end
+      if not expire(src) then
+        checkCharacter(src)
+        local running = quests[src]
+        if running and not running.finishing and not trackVehicles(src, running) then
+          TriggerClientEvent(RESOURCE .. ":client:ended", src, "vehicle")
+        end
+      end
     end
   end
 end)

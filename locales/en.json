@@ -81,6 +81,7 @@
   "expired": "You took too long, the job is off.",
   "vehicle_failed": "The vehicle could not be spawned. Try again in a moment.",
   "spot_blocked": "Something is in the way of the vehicle. Move it and try again.",
+  "vehicle_lost": "The vehicle is gone. Talk to %s to cancel the job.",
   "payment_failed": "The payment failed. Talk to %s again.",
   "unknown_quest": "That job doesn't exist.",
   "failed": "Something went wrong, try again.",

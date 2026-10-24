@@ -73,6 +73,113 @@ local VEHICLE_TYPES = { automobile = true, bike = true, boat = true, heli = true
 -- Stop types that need `vehicle`
 local NEEDS_VEHICLE = { deliver = true, ["return"] = true, carry = true, scrap = true }
 
+--- A config.lua kept from 1.x has no `Config` table: it sets ConfigDeliverCargo, ConfigPickupBoxes, ConfigTrashCar and
+--- ConfigClean. Their positions, models and rewards are mapped onto the 2.0 keys (quests cargo, boxes, trash and clean),
+--- so they keep working. Everything 1.x didn't have gets the 2.0 default.
+local function ApplyLegacyConfig()
+  if type(Config) == "table" then return end
+  Config = { Debug = false, Locale = "en", Framework = "auto", Target = "auto" }
+  local cargo, boxes, trash, clean = _G.ConfigDeliverCargo, _G.ConfigPickupBoxes, _G.ConfigTrashCar, _G.ConfigClean
+  if type(cargo) ~= "table" and type(boxes) ~= "table" and type(trash) ~= "table" and type(clean) ~= "table" then return end
+
+  local function first(list)
+    if type(list) ~= "table" then return nil end
+    local entry = list[1]
+    return type(entry) == "table" and type(entry.model) == "string" and isVector(entry) and entry or nil
+  end
+  local function spot(entry)
+    return vector4(entry.x + 0.0, entry.y + 0.0, entry.z + 0.0, (tonumber(entry.h) or 0.0) + 0.0)
+  end
+  local function reward(low, high)
+    low, high = tonumber(low) or 2000, tonumber(high) or 5000
+    return { min = math.min(low, high), max = math.max(low, high) }
+  end
+  local function quest(rewardMin, rewardMax, vehicles, stops, area)
+    return { reward = reward(rewardMin, rewardMax), account = "cash", cooldown = 300, vehicles = vehicles, stops = stops, area = area }
+  end
+
+  -- 1.x spawned Philip 1 m below MainPedPos
+  local legacyCargo = type(cargo) == "table" and cargo or {}
+  local pedPos = isVector(legacyCargo.MainPedPos) and legacyCargo.MainPedPos or vector3(-905.61, -2338.17, 6.71)
+  Config.Ped = {
+    name = "Philip",
+    model = type(legacyCargo.MainPedModel) == "string" and legacyCargo.MainPedModel or "a_m_y_cyclist_01",
+    coords = vector4(pedPos.x + 0.0, pedPos.y + 0.0, pedPos.z - 1.0, (tonumber(legacyCargo.MainPedHeading) or 330.0) + 0.0),
+    anim = { dict = "mini@strip_club@idles@bouncer@base", clip = "base" },
+    blip = { sprite = 351, colour = 49, scale = 1.2 },
+  }
+
+  local quests = {}
+  local truck, trailer = first(legacyCargo.MainTruck), first(legacyCargo.Trailer)
+  if truck and trailer and isVector(legacyCargo.TrailerDeliverPos) then
+    quests.cargo = quest(legacyCargo.DeliverCargoMinReward, legacyCargo.DeliverCargoMaxReward, {
+      truck = { model = truck.model, label = "the truck", sprite = 477, coords = spot(truck) },
+      trailer = { model = trailer.model, type = "trailer", label = "the trailer", sprite = 479, coords = spot(trailer) },
+    }, {
+      { type = "deliver", group = 1, vehicle = "truck", trailer = "trailer", radius = 7.5, coords = legacyCargo.TrailerDeliverPos },
+      { type = "return", group = 2, vehicle = "truck", radius = 5.0,
+        coords = isVector(legacyCargo.LeaveTruck) and legacyCargo.LeaveTruck or spot(truck) },
+    })
+  end
+  if type(boxes) == "table" then
+    local van = first(boxes.MainVehicle)
+    local stops = {}
+    for _, box in ipairs(type(boxes.PickUpPos) == "table" and boxes.PickUpPos or {}) do
+      if type(box) == "table" and isVector(box) then
+        stops[#stops + 1] = {
+          type = "carry", group = 1, vehicle = "van", duration = 5,
+          prop = type(box.objectHash) == "string" and box.objectHash or "prop_cs_cardbox_01",
+          coords = vector3(box.x + 0.0, box.y + 0.0, box.z + 0.0),
+        }
+      end
+    end
+    if van and #stops > 0 then
+      quests.boxes = quest(boxes.DeliverCargoMinReward, boxes.DeliverCargoMaxReward, {
+        van = { model = van.model, label = "the van", sprite = 669, coords = spot(van) },
+      }, stops)
+    end
+  end
+  if type(trash) == "table" then
+    local car, bulldozer, wreck = first(trash.MainVehicle), first(trash.BulldozerVehicle), first(trash.TrashVehicle)
+    if car and bulldozer and wreck then
+      quests.trash = quest(trash.TrashCarMinReward, trash.TrashCarMaxReward, {
+        car = { model = car.model, label = "your car", sprite = 227, coords = spot(car) },
+        bulldozer = { model = bulldozer.model, label = "the bulldozer", sprite = 227, spawnDistance = 150.0, coords = spot(bulldozer) },
+        wreck = { model = wreck.model, label = "the wreck", spawnDistance = 150.0, frozen = true, locked = true, coords = spot(wreck) },
+      }, {
+        { type = "scrap", group = 1, vehicle = "bulldozer", target = "wreck", radius = 15.0, bodyHealth = 360,
+          coords = vector3(wreck.x + 0.0, wreck.y + 0.0, wreck.z + 0.0) },
+      })
+    end
+  end
+  if type(clean) == "table" then
+    local stops = {}
+    for _, kind in ipairs({
+      { list = clean.BorstePos, action = "brush", scenario = "WORLD_HUMAN_JANITOR" },
+      { list = clean.BlowPos, action = "blow", scenario = "WORLD_HUMAN_GARDENER_LEAF_BLOWER" },
+      { list = clean.CleanPos, action = "clean", scenario = "WORLD_HUMAN_MAID_CLEAN" },
+    }) do
+      for _, pos in ipairs(type(kind.list) == "table" and kind.list or {}) do
+        if type(pos) == "table" and isVector(pos) then
+          stops[#stops + 1] = {
+            type = "task", group = 1, action = kind.action, duration = 15, scenario = kind.scenario,
+            heading = tonumber(pos.h), coords = vector3(pos.x + 0.0, pos.y + 0.0, pos.z + 0.0),
+          }
+        end
+      end
+    end
+    if #stops > 0 then
+      local area = isVector(clean.CleanRadius) and { coords = clean.CleanRadius, radius = 30.0 } or nil
+      quests.clean = quest(clean.CleanMinReward, clean.CleanMaxReward, nil, stops, area)
+    end
+  end
+  Config.Quests = quests
+
+  if not IS_SERVER then return end
+  Log("warn", "config.lua is in the 1.x format: its positions, models and rewards are used, everything else has the " ..
+    "2.0 defaults. Switch to the 2.0 config.lua to change the new options.")
+end
+
 local function PreparePed()
   local ped = Config.Ped
   if type(ped) ~= "table" or not isVector(ped.coords) then
@@ -503,6 +610,7 @@ else
   function IsPlayerLoaded() return false end
 end
 
+ApplyLegacyConfig()
 InitLocale()
 PreparePed()
 PrepareQuests()

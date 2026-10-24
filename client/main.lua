@@ -3,6 +3,8 @@ local CALLBACK_TIMEOUT = 15000
 local PED_SPAWN_DISTANCE = 50.0
 local MARKER_DISTANCE = 100.0
 local VEHICLE_REQUEST_INTERVAL = 5000
+-- Minimum time between two notifications that a vehicle can't spawn (the client keeps asking while the player is close)
+local VEHICLE_NOTIFY_INTERVAL = 30000
 local SLOW_TICK = 250
 local LEAVE_TIMEOUT = 3000
 -- How close (meters) the player has to be to the quest vehicle to load a box (the server allows a bit more)
@@ -159,8 +161,20 @@ local function requestVehicle(current, name)
   current.vehicleRequests[name] = now
   CreateThread(function()
     local ok, netId = awaitServer(RESOURCE .. ":server:vehicle", name)
-    if quest ~= current or not ok then return end
-    current.netIds[name] = tonumber(netId)
+    if quest ~= current then return end
+    if ok then
+      current.netIds[name] = tonumber(netId)
+      return
+    end
+    -- a blocked spot or a failed spawn needs the player (move the car standing there); told now and then, not every try
+    local reason = netId
+    if ok == false and (reason == "spot_blocked" or reason == "vehicle_failed") then
+      local at = GetGameTimer()
+      if (current.vehicleNotified[name] or -VEHICLE_NOTIFY_INTERVAL) + VEHICLE_NOTIFY_INTERVAL <= at then
+        current.vehicleNotified[name] = at
+        notifyReason(reason)
+      end
+    end
   end)
 end
 
@@ -739,6 +753,7 @@ local function beginQuest(def, netIds)
     done = {},
     netIds = {},
     vehicleRequests = {},
+    vehicleNotified = {},
     lastSeen = {},
     entered = {},
     blips = {},

@@ -37,3 +37,12 @@ A `config.lua` kept from 1.x still works (the positions, models and rewards of t
 ## Documentation
 
 https://docs.forcedevelopments.com/free-resources/force_quests/introduction
+
+## More from Force Developments
+
+Paid resources that pair well with this one. Escrow-protected, documented, with free updates:
+
+- **[Force Loanbank](https://forcedevelopments.com/scripts/force-loanbank?utm_source=github&utm_medium=readme&utm_campaign=force_quests)**: loans with interest rates and due dates.
+- **[Force Invoices](https://forcedevelopments.com/scripts/force-invoices?utm_source=github&utm_medium=readme&utm_campaign=force_quests)**: personal and job billing.
+
+Want all of them? [All Resources](https://forcedevelopments.com/scripts/all-resources-1-month?utm_source=github&utm_medium=readme&utm_campaign=force_quests) is a monthly subscription that includes every paid resource. Browse the full catalogue at [forcedevelopments.com](https://forcedevelopments.com/scripts?utm_source=github&utm_medium=readme&utm_campaign=force_quests).
